@@ -151,13 +151,21 @@ async function handle(req, res) {
         });
       }
 
-      const result = await git(initPath, ['init', '-b', 'main']);
+const result = await git(initPath, ['init', '-b', 'main']);
 
-      return send(res, 200, {
-        repo: repoName,
-        initialized: true,
-        result: result.stdout || result.stderr
-      });
+if (!process.env.GIT_AUTHOR_NAME || !process.env.GIT_AUTHOR_EMAIL) {
+  throw new Error('Configure GIT_AUTHOR_NAME e GIT_AUTHOR_EMAIL nas variáveis de ambiente.');
+}
+
+await git(initPath, ['config', 'user.name', process.env.GIT_AUTHOR_NAME]);
+await git(initPath, ['config', 'user.email', process.env.GIT_AUTHOR_EMAIL]);
+
+return send(res, 200, {
+  repo: repoName,
+  initialized: true,
+  result: result.stdout || result.stderr,
+  author: process.env.GIT_AUTHOR_NAME
+});
     } finally {
       activeRepos.delete(repoName);
     }
