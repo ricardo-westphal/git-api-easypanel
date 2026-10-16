@@ -95,12 +95,74 @@ async function handle(req, res) {
 
   const url = new URL(req.url, 'http://localhost');
   const action = url.pathname;
+  const isInit = req.method === 'POST' && action === '/init';
   const isRead = req.method === 'GET' && ['/status', '/diff'].includes(action);
   const isWrite = req.method === 'POST' && ['/commit', '/push', '/pull'].includes(action);
-  if (!isRead && !isWrite) return send(res, 404, { error: 'Endpoint não encontrado.' });
 
-  const body = isWrite ? await readBody(req) : {};
+  if (!isRead && !isWrite && !isInit) {
+    return send(res, 404, { error: 'Endpoint não encontrado.' });
+  }
+
+  const body = (isWrite || isInit) ? await readBody(req) : {};
   const repoName = isRead ? url.searchParams.get('repo') : body.repo;
+
+  if (isInit) {
+    if (!validRepoName(repoName)) {
+      throw Object.assign(
+        new Error('Informe um nome de pasta válido.'),
+        { status: 400 }
+      );
+    }
+
+    const initPath = path.resolve(ROOT, repoName);
+
+    if (path.dirname(initPath) !== ROOT) {
+      throw Object.assign(
+        new Error('Caminho de pasta inválido.'),
+        { status: 400 }
+      );
+    }
+
+    const stat = await fs.stat(initPath).catch(() => null);
+
+    if (!stat || !stat.isDirectory()) {
+      throw Object.assign(
+        new Error(`Pasta '${repoName}' não encontrada em /data.`),
+        { status: 404 }
+      );
+    }
+
+    if (activeRepos.has(repoName)) {
+      return send(res, 409, {
+        error: `Já existe uma operação em andamento na pasta '${repoName}'.`
+      });
+    }
+
+    activeRepos.add(repoName);
+
+    try {
+      const gitMarker = await fs.stat(path.join(initPath, '.git')).catch(() => null);
+
+      if (gitMarker) {
+        return send(res, 200, {
+          repo: repoName,
+          initialized: false,
+          message: 'A pasta já é um repositório Git.'
+        });
+      }
+
+      const result = await git(initPath, ['init', '-b', 'main']);
+
+      return send(res, 200, {
+        repo: repoName,
+        initialized: true,
+        result: result.stdout || result.stderr
+      });
+    } finally {
+      activeRepos.delete(repoName);
+    }
+  }
+
   const repoPath = await getRepo(repoName);
 
   if (activeRepos.has(repoName)) return send(res, 409, { error: `Já existe uma operação em andamento no repositório '${repoName}'.` });
